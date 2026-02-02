@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guitar Fretboard Trainer</title>
+    <style>
+        :root {
+            --fret-color: #d4a373;
+            --string-color: #ccc;
+            --bg-color: #222;
+            --note-selected: #e76f51; /* オレンジ */
+            --note-root: #3a86ff;     /* ルート用（青） */
+            --note-correct: #2a9d8f;  /* 緑 */
+            --note-miss: #e63946;     /* 赤 */
+            --text-color: #eee;
+            --control-bg: #444;
+            --inlay-color: rgba(240, 230, 200, 0.6);
+        }
+        body {
+            font-family: sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 15px; font-size: 1.4rem; text-align: center; }
+        
+        /* コントロールエリア */
+        .controls-top {
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 100%;
+            max-width: 600px;
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 0.9rem; color: #aaa; }
+        select {
+            padding: 12px; font-size: 1rem; border-radius: 4px;
+            border: 1px solid #555; background: var(--control-bg); color: white; width: 100%;
+        }
+        
+        /* 指板のコンテナ */
+        .fretboard-container {
+            width: 100%; max-width: 800px; overflow-x: auto;
+            padding-bottom: 10px; margin-bottom: 20px;
+            border: 4px solid #555;
+            background: #1a1a1a;
+        }
+
+        .fretboard {
+            display: flex; flex-direction: column;
+            background: var(--fret-color); min-width: 900px; position: relative;
+        }
+
+        /* 弦 */
+        .string {
+            display: flex; height: 42px;
+            position: relative; align-items: center;
+        }
+        
+        /* 弦の線 */
+        .string::before {
+            content: ''; position: absolute; left: 0; right: 0; top: 50%;
+            transform: translateY(-50%);
+            height: var(--string-thickness, 1px);
+            background-color: var(--string-color);
+            /* z-index: 5 に設定（フレットやインレイより上） */
+            z-index: 5; 
+            box-shadow: 0 1px 1px rgba(0,0,0,0.4);
+            pointer-events: none; /* 線がクリックを邪魔しないように */
+        }
+
+        /* フレット */
+        .fret {
+            flex: 1; height: 100%;
+            border-right: 2px solid silver;
+            position: relative; cursor: pointer;
+            /* ★修正箇所: ここにあった z-index: 1 を削除しました */
+            /* これにより、子要素である .note-marker が自由に前面に出られるようになります */
+        }
+        .fret[data-fret="12"] { border-right-width: 4px; }
+        .fret:first-child {
+            border-right: 8px solid #eee; background-color: #444; flex: 0 0 40px; 
+        }
+
+        /* ポジションマーク（インレイ） */
+        .inlay-dot {
+            position: absolute;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background-color: var(--inlay-color);
+            pointer-events: none;
+            z-index: 0; /* 最背面 */
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .inlay-single { bottom: -7px; left: 50%; transform: translateX(-50%); }
+        .inlay-double { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+        /* --- ノートマーカー（丸印） --- */
+        .note-marker {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 24px; height: 24px; 
+            border-radius: 50%;
+            background-color: var(--note-selected);
+            display: none; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            /* 弦(z-index:5)より確実に上にする */
+            z-index: 100; 
+            
+            color: white; font-size: 10px; font-weight: bold;
+            align-items: center; justify-content: center;
+        }
+        
+        /* ルート音(C)が選択された時の特別色 */
+        .note-marker.is-root {
+            background-color: var(--note-root);
+            border: 2px solid #fff; 
+            width: 26px; height: 26px;
+        }
+
+        /* 表示制御 */
+        .fret.selected .note-marker { display: flex; }
+        .fret.correct .note-marker { background-color: var(--note-correct); display: flex; border: none; }
+        .fret.miss .note-marker { background-color: var(--note-miss); display: flex; opacity: 0.8; border: none; }
+        
+        .fret.missed .note-marker { 
+            display: flex; background-color: transparent; 
+            border: 3px dashed var(--note-correct); 
+            box-sizing: border-box;
+        }
+
+        .controls-bottom { display: flex; gap: 10px; justify-content: center; }
+        button {
+            padding: 12px 24px; font-size: 1rem; cursor: pointer; border: none;
+            border-radius: 4px; background: var(--note-correct); color: white; font-weight: bold;
+        }
+        button.reset { background: #555; }
+        #result { margin-top: 20px; font-weight: bold; min-height: 1.5em; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <h1>Guitar Fretboard Trainer</h1>
+
+    <div class="controls-top">
+        <div class="control-group">
+            <label>1. カテゴリ</label>
+            <select id="category-select" onchange="updateTypeOptions()">
+                <option value="scales">Scales (スケール)</option>
+                <option value="chords">Chord Tones (コードトーン)</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>2. 種類 (Root: C)</label>
+            <select id="type-select" onchange="changeMode()">
+                </select>
+        </div>
+    </div>
+
+    <div class="fretboard-container">
+        <div class="fretboard" id="fretboard"></div>
+    </div>
+
+    <div class="controls-bottom">
+        <button onclick="checkAnswer()">回答合わせ</button>
+        <button class="reset" onclick="resetBoard()">リセット</button>
+    </div>
+    <div id="result">フレットをタップして音を選択してください</div>
+
+<script>
+    const tuning = [4, 11, 7, 2, 9, 4]; // 1弦(E) 〜 6弦(E)
+    const fretCount = 17;
+    const rootNote = 0; // C
+
+    const problemSets = {
+        scales: [
+            { id: 'major_scale', name: 'Major Scale', intervals: [0, 2, 4, 5, 7, 9, 11] },
+            { id: 'minor_scale', name: 'Natural Minor Scale', intervals: [0, 2, 3, 5, 7, 8, 10] },
+            { id: 'major_penta', name: 'Major Pentatonic', intervals: [0, 2, 4, 7, 9] },
+            { id: 'minor_penta', name: 'Minor Pentatonic', intervals: [0, 3, 5, 7, 10] }
+        ],
+        chords: [
+            { id: 'M7',   name: 'Major 7th (C, E, G, B)',       intervals: [0, 4, 7, 11] },
+            { id: '7',    name: 'Dominant 7th (C, E, G, B♭)',   intervals: [0, 4, 7, 10] },
+            { id: 'm7',   name: 'Minor 7th (C, E♭, G, B♭)',     intervals: [0, 3, 7, 10] },
+            { id: 'm7b5', name: 'Minor 7th ♭5 (C, E♭, G♭, B♭)', intervals: [0, 3, 6, 10] }
+        ]
+    };
+
+    let currentIntervals = [];
+
+    const fretboardEl = document.getElementById('fretboard');
+    const resultEl = document.getElementById('result');
+    const categorySelect = document.getElementById('category-select');
+    const typeSelect = document.getElementById('type-select');
+
+    function init() {
+        initBoard();
+        updateTypeOptions();
+    }
+
+    function initBoard() {
+        fretboardEl.innerHTML = '';
+        
+        tuning.forEach((openNote, stringIndex) => {
+            const stringEl = document.createElement('div');
+            stringEl.className = 'string';
+            
+            const thickness = 1.2 + (stringIndex * 0.7); 
+            stringEl.style.setProperty('--string-thickness', thickness + 'px');
+            
+            for (let f = 0; f <= fretCount; f++) {
+                const fretEl = document.createElement('div');
+                fretEl.className = 'fret';
+                
+                const noteValue = (openNote + f) % 12;
+                fretEl.dataset.note = noteValue;
+                
+                // --- ポジションマーク ---
+                const singleDotFrets = [3, 5, 7, 9, 15, 17];
+                const doubleDotFret = 12;
+
+                if (stringIndex === 2 && singleDotFrets.includes(f)) {
+                    const dot = document.createElement('div');
+                    dot.className = 'inlay-dot inlay-single';
+                    fretEl.appendChild(dot);
+                }
+                if (f === doubleDotFret && (stringIndex === 1 || stringIndex === 4)) {
+                    const dot = document.createElement('div');
+                    dot.className = 'inlay-dot inlay-double';
+                    fretEl.appendChild(dot);
+                }
+
+                // --- マーカー生成 ---
+                const marker = document.createElement('div');
+                marker.className = 'note-marker';
+                
+                // ルート音かどうかをクラスで付与（CSSで色を変えるため）
+                if (noteValue === rootNote) {
+                    marker.classList.add('is-root');
+                }
+
+                fretEl.appendChild(marker);
+
+                fretEl.addEventListener('click', () => {
+                    fretEl.classList.toggle('selected');
+                    fretEl.classList.remove('correct', 'miss', 'missed');
+                    resultEl.textContent = 'フレットを選択中...';
+                    resultEl.style.color = 'var(--text-color)';
+                });
+
+                stringEl.appendChild(fretEl);
+            }
+            fretboardEl.appendChild(stringEl);
+        });
+    }
+
+    function updateTypeOptions() {
+        const category = categorySelect.value;
+        const options = problemSets[category];
+        typeSelect.innerHTML = '';
+        options.forEach(opt => {
+            const optionEl = document.createElement('option');
+            optionEl.value = opt.id;
+            optionEl.textContent = opt.name;
+            typeSelect.appendChild(optionEl);
+        });
+        changeMode();
+    }
+
+    function changeMode() {
+        const category = categorySelect.value;
+        const typeId = typeSelect.value;
+        const selectedData = problemSets[category].find(item => item.id === typeId);
+        if (selectedData) {
+            currentIntervals = selectedData.intervals;
+        }
+        resetBoard();
+    }
+
+    function checkAnswer() {
+        const targetNotes = currentIntervals.map(i => (rootNote + i) % 12);
+        const allFrets = document.querySelectorAll('.fret');
+        let correctCount = 0; let missCount = 0;
+
+        allFrets.forEach(fret => {
+            const note = parseInt(fret.dataset.note);
+            const isSelected = fret.classList.contains('selected');
+            const isTarget = targetNotes.includes(note);
+            fret.classList.remove('correct', 'miss', 'missed');
+
+            if (isSelected) {
+                if (isTarget) {
+                    fret.classList.add('correct'); correctCount++;
+                } else {
+                    fret.classList.add('miss'); missCount++;
+                }
+            } else {
+                if (isTarget) fret.classList.add('missed');
+            }
+        });
+
+        if (missCount === 0 && correctCount > 0) {
+            resultEl.textContent = `正解！ (${correctCount}個の音を見つけました)`;
+            resultEl.style.color = "var(--note-correct)";
+        } else if (missCount > 0) {
+            resultEl.textContent = `スケール外の音が ${missCount}個 含まれています`;
+            resultEl.style.color = "var(--note-miss)";
+        } else {
+            resultEl.textContent = "フレットを選択してください";
+        }
+    }
+
+    function resetBoard() {
+        document.querySelectorAll('.fret').forEach(f => {
+            f.classList.remove('selected', 'correct', 'miss', 'missed');
+        });
+        resultEl.textContent = 'リセットしました';
+        resultEl.style.color = 'var(--text-color)';
+    }
+
+    init();
+</script>
+</body>
+</html>
